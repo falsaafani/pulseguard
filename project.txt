@@ -1,0 +1,179 @@
+Here’s a solid, real-world project you can build and ship with **TypeScript, Go, Python, Docker, and Kubernetes**:
+
+# Project: PulseGuard — Uptime & Anomaly Monitoring Platform
+
+## What it does (MVP)
+
+* **Checks** a list of URLs/services on a schedule.
+* **Stores** latency/status history.
+* **Detects anomalies** in latency and error rate.
+* **Visualizes** results on a web dashboard.
+* **Notifies** via Slack/Webhook when incidents happen.
+
+---
+
+## Services & Tech split
+
+* **`probe-api` (Go)**
+
+  * REST endpoints: `POST /targets`, `GET /status`, `GET /metrics`
+  * Background goroutines to probe targets (HTTP/TCP/ICMP), push results to **NATS** (or **RabbitMQ**).
+  * Writes recent state to **PostgreSQL**.
+* **`anomaly-worker` (Python)**
+
+  * Subscribes to results stream, computes z-score/ESD for latency & failure spikes.
+  * Emits “incident start/clear” events to bus and persists summaries in PostgreSQL.
+* **`webapp` (TypeScript, Next.js)**
+
+  * Dashboard: targets, current status, sparkline charts, incidents timeline.
+  * Admin UI to add/remove targets.
+  * BFF (API routes) reads from PostgreSQL and consumes readonly endpoints from `probe-api`.
+* **`notifier` (Go or TS)**
+
+  * Listens for incident events → sends Slack/Webhook notifications. (Start with Slack).
+
+**Infra:** PostgreSQL, NATS (or RabbitMQ), Redis (optional caching).
+**Observability:** OpenTelemetry + Prometheus + Grafana (stretch).
+
+---
+
+## Minimal schema (PostgreSQL)
+
+* `targets(id, name, url, type, enabled, created_at)`
+* `probes(id, target_id, ts, latency_ms, status_code, ok)` (time-series)
+* `incidents(id, target_id, started_at, ended_at, kind, details)`
+
+---
+
+## API (quick sketch)
+
+* `POST /targets` `{ name, url, type }` → create
+* `GET /targets` → list
+* `GET /status?target_id=...` → last N probe results
+* `GET /metrics` → Prometheus metrics (for cluster autoscaling/alerts)
+
+---
+
+## Repo structure
+
+```
+pulseguard/
+  probe-api/                 # Go
+    main.go
+    go.mod
+    internal/...
+    Dockerfile
+  anomaly-worker/            # Python
+    app.py
+    requirements.txt
+    Dockerfile
+  webapp/                    # TypeScript (Next.js)
+    package.json
+    next.config.js
+    src/
+    Dockerfile
+  notifier/                  # Go or TS (pick one)
+    main.go
+    Dockerfile
+  deploy/
+    k8s/
+      base/
+        namespace.yaml
+        postgres.yaml
+        nats.yaml
+        probe-api-deploy.yaml
+        probe-api-svc.yaml
+        anomaly-worker-deploy.yaml
+        webapp-deploy.yaml
+        webapp-svc.yaml
+        notifier-deploy.yaml
+        configmap.yaml
+        secret.yaml
+        ingress.yaml
+      hpa/
+        probe-api-hpa.yaml
+        webapp-hpa.yaml
+    helm/ (optional alternative to kustomize)
+  Makefile
+  README.md
+```
+
+---
+
+## Docker (example patterns)
+
+* **Go services**:
+
+  * Multi-stage: `golang:1.22` build → `gcr.io/distroless/base-debian12` run.
+* **Python worker**:
+
+  * `python:3.11-slim`, `pip install -r requirements.txt`.
+* **Next.js**:
+
+  * `node:20` builder → `node:20-slim` runner (or Next standalone).
+
+---
+
+## Kubernetes (key objects)
+
+* **Deployments**: probe-api, anomaly-worker, webapp, notifier
+* **Services**: ClusterIP for internal comms; webapp exposed via **Ingress**
+* **ConfigMap**: probe intervals, worker thresholds, Slack webhook URL name (value in Secret)
+* **Secrets**: DB creds, Slack webhook
+* **HPA**: scale `probe-api` on CPU or custom metric (requests/sec)
+* **Roles**: minimal RBAC if needed
+* **Optional**: CronJob to compact old probe rows
+
+---
+
+## Local dev & scripts
+
+**Makefile (sketch):**
+
+```makefile
+build:
+	docker build -t pg/probe-api:dev ./probe-api
+	docker build -t pg/anomaly-worker:dev ./anomaly-worker
+	docker build -t pg/webapp:dev ./webapp
+	docker build -t pg/notifier:dev ./notifier
+
+kind-up:
+	kind create cluster --name pulseguard
+
+k8s-apply:
+	kubectl apply -k deploy/k8s/base
+
+port-forward:
+	kubectl -n pulseguard port-forward svc/webapp 3000:80
+```
+
+---
+
+## MVP milestones
+
+1. **Week 1**:
+
+   * Go `probe-api` with `GET /health`, `POST/GET /targets`, scheduler, push to NATS, store to Postgres.
+   * Next.js UI shows targets + last status.
+2. **Week 2**:
+
+   * Python `anomaly-worker` computing simple z-score; write `incidents`.
+   * Incident table on UI.
+3. **Week 3**:
+
+   * `notifier` to Slack.
+   * Dockerize all, deploy to local K8s (kind/minikube).
+4. **Week 4** (stretch):
+
+   * Ingress + TLS, HPA, Prometheus/Grafana, per-tenant RBAC.
+
+---
+
+## Stretch ideas
+
+* gRPC between services (Go ↔ Python via gRPC gateway).
+* Multi-cloud probes (daemonset running in different regions/clusters).
+* SLOs & burn-rate alerts.
+* Anomaly models: Prophet/ARIMA (Python) for seasonality.
+
+If you want, I can generate the **initial repo scaffold (files + sample code stubs)** next so you can `docker compose up` or deploy to **kind** immediately.

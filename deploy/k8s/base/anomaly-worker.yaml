@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-worker
+  namespace: pulseguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anomaly-worker
+  template:
+    metadata:
+      labels:
+        app: anomaly-worker
+    spec:
+      containers:
+      - name: anomaly-worker
+        image: pulseguard/anomaly-worker:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: pulseguard-config
+              key: database-url
+        - name: NATS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: pulseguard-config
+              key: nats-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

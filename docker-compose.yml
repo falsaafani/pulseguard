@@ -1,0 +1,95 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pulseguard-postgres
+    environment:
+      POSTGRES_DB: pulseguard
+      POSTGRES_USER: pulseguard
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulseguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: pulseguard-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: "-js -m 8222"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  probe-api:
+    build:
+      context: ./probe-api
+      dockerfile: Dockerfile
+    container_name: pulseguard-probe-api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://pulseguard:password@postgres:5432/pulseguard?sslmode=disable
+      NATS_URL: nats://nats:4222
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  anomaly-worker:
+    build:
+      context: ./anomaly-worker
+      dockerfile: Dockerfile
+    container_name: pulseguard-anomaly-worker
+    environment:
+      DATABASE_URL: postgres://pulseguard:password@postgres:5432/pulseguard?sslmode=disable
+      NATS_URL: nats://nats:4222
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notifier:
+    build:
+      context: ./notifier
+      dockerfile: Dockerfile
+    container_name: pulseguard-notifier
+    environment:
+      NATS_URL: nats://nats:4222
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/YOUR/WEBHOOK/URL}
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    container_name: pulseguard-webapp
+    ports:
+      - "3000:3000"
+    environment:
+      PROBE_API_URL: http://probe-api:8080
+    depends_on:
+      - probe-api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
