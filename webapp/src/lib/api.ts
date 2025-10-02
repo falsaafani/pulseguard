@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.PROBE_API_URL || 'http://localhost:8080'
+const API_BASE_URL = process.env.NEXT_PUBLIC_PROBE_API_URL || 'http://localhost:8080'
 
 export async function fetchTargets() {
   const response = await fetch(`${API_BASE_URL}/targets`)

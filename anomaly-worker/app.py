@@ -2,7 +2,7 @@ import asyncio
 import os
 import json
 import logging
-from nats.aio.client import Client as NATS
+import nats
 from app.detector import AnomalyDetector
 from app.storage import Database
 
@@ -30,21 +30,27 @@ async def message_handler(msg, detector, db):
 
 async def main():
     # Connect to NATS
-    nc = NATS()
-    await nc.connect(os.getenv("NATS_URL", "nats://localhost:4222"))
+    nc = await nats.connect(os.getenv("NATS_URL", "nats://localhost:4222"))
 
     # Initialize detector and database
     detector = AnomalyDetector()
     db = Database(os.getenv("DATABASE_URL"))
 
     # Subscribe to probe results
-    await nc.subscribe("probe.results", cb=lambda msg: message_handler(msg, detector, db))
+    async def msg_handler(msg):
+        await message_handler(msg, detector, db)
+
+    await nc.subscribe("probe.results", cb=msg_handler)
 
     logger.info("Anomaly worker started, listening for probe results...")
 
     # Keep running
-    while True:
-        await asyncio.sleep(1)
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        await nc.close()
+        logger.info("Anomaly worker stopped")
 
 
 if __name__ == "__main__":
